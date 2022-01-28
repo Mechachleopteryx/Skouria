@@ -4,13 +4,8 @@ use std::os::raw::{c_char, c_int};
 
 #[cfg_attr(windows, link(name = "pythonXY"))]
 extern "C" {
+    #[cfg_attr(PyPy, link_name = "PyPyDict_Type")]
     pub static mut PyDict_Type: PyTypeObject;
-    pub static mut PyDictIterKey_Type: PyTypeObject;
-    pub static mut PyDictIterValue_Type: PyTypeObject;
-    pub static mut PyDictIterItem_Type: PyTypeObject;
-    pub static mut PyDictKeys_Type: PyTypeObject;
-    pub static mut PyDictItems_Type: PyTypeObject;
-    pub static mut PyDictValues_Type: PyTypeObject;
 }
 
 #[inline]
@@ -23,27 +18,6 @@ pub unsafe fn PyDict_CheckExact(op: *mut PyObject) -> c_int {
     (Py_TYPE(op) == &mut PyDict_Type) as c_int
 }
 
-#[inline]
-pub unsafe fn PyDictKeys_Check(op: *mut PyObject) -> c_int {
-    (Py_TYPE(op) == &mut PyDictKeys_Type) as c_int
-}
-
-#[inline]
-pub unsafe fn PyDictItems_Check(op: *mut PyObject) -> c_int {
-    (Py_TYPE(op) == &mut PyDictItems_Type) as c_int
-}
-
-#[inline]
-pub unsafe fn PyDictValues_Check(op: *mut PyObject) -> c_int {
-    (Py_TYPE(op) == &mut PyDictValues_Type) as c_int
-}
-
-#[inline]
-pub unsafe fn PyDictViewSet_Check(op: *mut PyObject) -> c_int {
-    (PyDictKeys_Check(op) != 0 || PyDictItems_Check(op) != 0) as c_int
-}
-
-#[cfg_attr(windows, link(name = "pythonXY"))]
 extern "C" {
     #[cfg_attr(PyPy, link_name = "PyPyDict_New")]
     pub fn PyDict_New() -> *mut PyObject;
@@ -55,7 +29,7 @@ extern "C" {
     #[cfg_attr(PyPy, link_name = "PyPyDict_DelItem")]
     pub fn PyDict_DelItem(mp: *mut PyObject, key: *mut PyObject) -> c_int;
     #[cfg_attr(PyPy, link_name = "PyPyDict_Clear")]
-    pub fn PyDict_Clear(mp: *mut PyObject) -> ();
+    pub fn PyDict_Clear(mp: *mut PyObject);
     #[cfg_attr(PyPy, link_name = "PyPyDict_Next")]
     pub fn PyDict_Next(
         mp: *mut PyObject,
@@ -90,4 +64,49 @@ extern "C" {
     ) -> c_int;
     #[cfg_attr(PyPy, link_name = "PyPyDict_DelItemString")]
     pub fn PyDict_DelItemString(dp: *mut PyObject, key: *const c_char) -> c_int;
+    // skipped 3.10 / ex-non-limited PyObject_GenericGetDict
 }
+
+#[cfg_attr(windows, link(name = "pythonXY"))]
+extern "C" {
+    pub static mut PyDictKeys_Type: PyTypeObject;
+    pub static mut PyDictValues_Type: PyTypeObject;
+    pub static mut PyDictItems_Type: PyTypeObject;
+}
+
+#[inline]
+pub unsafe fn PyDictKeys_Check(op: *mut PyObject) -> c_int {
+    (Py_TYPE(op) == &mut PyDictKeys_Type) as c_int
+}
+
+#[inline]
+pub unsafe fn PyDictValues_Check(op: *mut PyObject) -> c_int {
+    (Py_TYPE(op) == &mut PyDictValues_Type) as c_int
+}
+
+#[inline]
+pub unsafe fn PyDictItems_Check(op: *mut PyObject) -> c_int {
+    (Py_TYPE(op) == &mut PyDictItems_Type) as c_int
+}
+
+#[inline]
+pub unsafe fn PyDictViewSet_Check(op: *mut PyObject) -> c_int {
+    (PyDictKeys_Check(op) != 0 || PyDictItems_Check(op) != 0) as c_int
+}
+
+#[cfg_attr(windows, link(name = "pythonXY"))]
+extern "C" {
+    pub static mut PyDictIterKey_Type: PyTypeObject;
+    pub static mut PyDictIterValue_Type: PyTypeObject;
+    pub static mut PyDictIterItem_Type: PyTypeObject;
+    #[cfg(Py_3_8)]
+    pub static mut PyDictRevIterKey_Type: PyTypeObject;
+    #[cfg(Py_3_8)]
+    pub static mut PyDictRevIterValue_Type: PyTypeObject;
+    #[cfg(Py_3_8)]
+    pub static mut PyDictRevIterItem_Type: PyTypeObject;
+}
+
+#[cfg(any(PyPy, Py_LIMITED_API))]
+// TODO: remove (see https://github.com/PyO3/pyo3/pull/1341#issuecomment-751515985)
+opaque_struct!(PyDictObject);

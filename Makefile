@@ -1,33 +1,59 @@
-.PHONY: test test_py3 publish clippy lint fmt
+.PHONY: test test_py publish clippy lint fmt fmt_py fmt_rust
 
-# Constants used in clippy target
-CLIPPY_LINTS_TO_DENY := warnings
-CLIPPY_LINTS_TO_ALLOW := clippy::new_ret_no_self
+ALL_ADDITIVE_FEATURES = macros multiple-pymethods num-bigint num-complex hashbrown serde indexmap eyre anyhow
+COVERAGE_PACKAGES = --package pyo3 --package pyo3-build-config --package pyo3-macros-backend --package pyo3-macros
 
-test:
+list_all_additive_features:
+	@echo $(ALL_ADDITIVE_FEATURES)
+
+test: lint test_py
 	cargo test
-	${MAKE} clippy
-	tox
-	for example in examples/*; do tox -e py -c $$example/tox.ini; done
+	cargo test --features="abi3"
+	cargo test --features="$(ALL_ADDITIVE_FEATURES)"
+	cargo test --features="abi3 $(ALL_ADDITIVE_FEATURES)"
 
-test_py3:
-	tox -e py3
-	for example in examples/*; do tox -e py3 -c $$example/tox.ini; done
+test_py:
+	@for example in examples/*/noxfile.py; do echo "-- Running nox for $$example --"; nox -f $$example/noxfile.py || exit 1; echo ""; done
+	@for package in pytests/*/noxfile.py; do echo "-- Running nox for $$package --"; nox -f $$package/noxfile.py || exit 1; echo ""; done
 
-fmt:
-	cargo fmt --all -- --check
+fmt_py:
 	black . --check
 
+fmt_rust:
+	cargo fmt --all -- --check
+	for package in pytests/*/; do cargo fmt --manifest-path $$package/Cargo.toml -- --check || exit 1; done
+
+fmt: fmt_rust fmt_py
+	@true
+
+coverage:
+	# cargo llvm-cov clean --workspace
+	# cargo llvm-cov $(COVERAGE_PACKAGES) --no-report
+	# cargo llvm-cov $(COVERAGE_PACKAGES) --no-report --features abi3
+	# cargo llvm-cov $(COVERAGE_PACKAGES) --no-report --features $(ALL_ADDITIVE_FEATURES)
+	# cargo llvm-cov $(COVERAGE_PACKAGES) --no-report --features abi3 $(ALL_ADDITIVE_FEATURES)
+	bash -c "\
+		set -a\
+		source <(cargo llvm-cov show-env)\
+		make test_py\
+	"
+	cargo llvm-cov $(COVERAGE_PACKAGES) --no-run --summary-only
+
+
 clippy:
-	@touch src/lib.rs  # Touching file to ensure that cargo clippy will re-check the project
-	cargo clippy --all-features --all-targets -- \
-		$(addprefix -D ,${CLIPPY_LINTS_TO_DENY}) \
-		$(addprefix -A ,${CLIPPY_LINTS_TO_ALLOW})
+	cargo clippy --features="$(ALL_ADDITIVE_FEATURES)" --all-targets --workspace -- -Dwarnings
+	cargo clippy --features="abi3 $(ALL_ADDITIVE_FEATURES)" --all-targets --workspace -- -Dwarnings
+	for example in examples/*/; do cargo clippy --manifest-path $$example/Cargo.toml -- -Dwarnings || exit 1; done
+	for package in pytests/*/; do cargo clippy --manifest-path $$package/Cargo.toml -- -Dwarnings || exit 1; done
 
 lint: fmt clippy
 	@true
 
 publish: test
-	cargo publish --manifest-path pyo3-derive-backend/Cargo.toml
-	cargo publish --manifest-path pyo3cls/Cargo.toml
+	cargo publish --manifest-path pyo3-build-config/Cargo.toml
+	sleep 10
+	cargo publish --manifest-path pyo3-macros-backend/Cargo.toml
+	sleep 10  # wait for crates.io to update
+	cargo publish --manifest-path pyo3-macros/Cargo.toml
+	sleep 10  # wait for crates.io to update
 	cargo publish

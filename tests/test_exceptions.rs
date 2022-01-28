@@ -1,12 +1,16 @@
+#![cfg(feature = "macros")]
+
 use pyo3::prelude::*;
-use pyo3::{exceptions, py_run, wrap_pyfunction, PyErr, PyResult};
+use pyo3::{exceptions, py_run, PyErr, PyResult};
 use std::error::Error;
 use std::fmt;
+#[cfg(not(target_os = "windows"))]
 use std::fs::File;
 
 mod common;
 
 #[pyfunction]
+#[cfg(not(target_os = "windows"))]
 fn fail_to_open_file() -> PyResult<()> {
     File::open("not_there.txt")?;
     Ok(())
@@ -17,7 +21,7 @@ fn fail_to_open_file() -> PyResult<()> {
 fn test_filenotfounderror() {
     let gil = Python::acquire_gil();
     let py = gil.python();
-    let fail_to_open_file = wrap_pyfunction!(fail_to_open_file)(py);
+    let fail_to_open_file = wrap_pyfunction!(fail_to_open_file)(py).unwrap();
 
     py_run!(
         py,
@@ -44,7 +48,7 @@ impl fmt::Display for CustomError {
 
 impl std::convert::From<CustomError> for PyErr {
     fn from(err: CustomError) -> PyErr {
-        exceptions::OSError::py_err(err.to_string())
+        exceptions::PyOSError::new_err(err.to_string())
     }
 }
 
@@ -62,7 +66,7 @@ fn call_fail_with_custom_error() -> PyResult<()> {
 fn test_custom_error() {
     let gil = Python::acquire_gil();
     let py = gil.python();
-    let call_fail_with_custom_error = wrap_pyfunction!(call_fail_with_custom_error)(py);
+    let call_fail_with_custom_error = wrap_pyfunction!(call_fail_with_custom_error)(py).unwrap();
 
     py_run!(
         py,
@@ -78,7 +82,7 @@ fn test_custom_error() {
 
 #[test]
 fn test_exception_nosegfault() {
-    use std::{net::TcpListener, panic};
+    use std::net::TcpListener;
     fn io_err() -> PyResult<()> {
         TcpListener::bind("no:address")?;
         Ok(())

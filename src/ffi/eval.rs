@@ -1,7 +1,6 @@
 use crate::ffi::object::PyObject;
 use std::os::raw::c_int;
 
-#[cfg_attr(windows, link(name = "pythonXY"))]
 extern "C" {
     #[cfg_attr(PyPy, link_name = "PyPyEval_EvalCode")]
     pub fn PyEval_EvalCode(
@@ -22,4 +21,7 @@ extern "C" {
         kwdefs: *mut PyObject,
         closure: *mut PyObject,
     ) -> *mut PyObject;
+
+    // skipped non-limited _PyEval_EvalCodeWithName
+    // skipped non-limited _PyEval_CallTracing
 }

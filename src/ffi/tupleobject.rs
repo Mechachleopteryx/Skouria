@@ -2,13 +2,6 @@ use crate::ffi::object::*;
 use crate::ffi::pyport::Py_ssize_t;
 use std::os::raw::c_int;
 
-#[repr(C)]
-#[cfg(not(Py_LIMITED_API))]
-pub struct PyTupleObject {
-    pub ob_base: PyVarObject,
-    pub ob_item: [*mut PyObject; 1],
-}
-
 #[cfg_attr(windows, link(name = "pythonXY"))]
 extern "C" {
     #[cfg_attr(PyPy, link_name = "PyPyTuple_Type")]
@@ -26,7 +19,6 @@ pub unsafe fn PyTuple_CheckExact(op: *mut PyObject) -> c_int {
     (Py_TYPE(op) == &mut PyTuple_Type) as c_int
 }
 
-#[cfg_attr(windows, link(name = "pythonXY"))]
 extern "C" {
     #[cfg_attr(PyPy, link_name = "PyPyTuple_New")]
     pub fn PyTuple_New(size: Py_ssize_t) -> *mut PyObject;
@@ -44,31 +36,6 @@ extern "C" {
     ) -> *mut PyObject;
     #[cfg_attr(PyPy, link_name = "PyPyTuple_Pack")]
     pub fn PyTuple_Pack(arg1: Py_ssize_t, ...) -> *mut PyObject;
+    #[cfg(not(Py_3_9))]
     pub fn PyTuple_ClearFreeList() -> c_int;
-}
-
-/// Macro, trading safety for speed
-#[inline]
-#[cfg(not(Py_LIMITED_API))]
-pub unsafe fn PyTuple_GET_ITEM(op: *mut PyObject, i: Py_ssize_t) -> *mut PyObject {
-    *(*(op as *mut PyTupleObject))
-        .ob_item
-        .as_ptr()
-        .offset(i as isize)
-}
-
-#[inline]
-#[cfg(not(Py_LIMITED_API))]
-pub unsafe fn PyTuple_GET_SIZE(op: *mut PyObject) -> Py_ssize_t {
-    Py_SIZE(op)
-}
-
-/// Macro, *only* to be used to fill in brand new tuples
-#[inline]
-#[cfg(not(Py_LIMITED_API))]
-pub unsafe fn PyTuple_SET_ITEM(op: *mut PyObject, i: Py_ssize_t, v: *mut PyObject) {
-    *(*(op as *mut PyTupleObject))
-        .ob_item
-        .as_mut_ptr()
-        .offset(i as isize) = v;
 }

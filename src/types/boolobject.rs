@@ -1,21 +1,17 @@
 // Copyright (c) 2017-present PyO3 Project and Contributors
-use crate::ffi;
-use crate::object::PyObject;
-use crate::types::PyAny;
-use crate::FromPyObject;
-use crate::PyResult;
-use crate::Python;
-use crate::{AsPyPointer, FromPy};
-use crate::{PyTryFrom, ToPyObject};
+use crate::{
+    ffi, AsPyPointer, FromPyObject, IntoPy, PyAny, PyObject, PyResult, PyTryFrom, Python,
+    ToPyObject,
+};
 
 /// Represents a Python `bool`.
 #[repr(transparent)]
-pub struct PyBool(PyObject);
+pub struct PyBool(PyAny);
 
-pyobject_native_type!(PyBool, ffi::PyBool_Type, ffi::PyBool_Check);
+pyobject_native_type!(PyBool, ffi::PyObject, ffi::PyBool_Type, #checkfunction=ffi::PyBool_Check);
 
 impl PyBool {
-    /// Depending on `val`, returns `py.True()` or `py.False()`.
+    /// Depending on `val`, returns `true` or `false`.
     #[inline]
     pub fn new(py: Python, val: bool) -> &PyBool {
         unsafe { py.from_borrowed_ptr(if val { ffi::Py_True() } else { ffi::Py_False() }) }
@@ -28,7 +24,7 @@ impl PyBool {
     }
 }
 
-/// Converts a rust `bool` to a Python `bool`.
+/// Converts a Rust `bool` to a Python `bool`.
 impl ToPyObject for bool {
     #[inline]
     fn to_object(&self, py: Python) -> PyObject {
@@ -45,14 +41,14 @@ impl ToPyObject for bool {
     }
 }
 
-impl FromPy<bool> for PyObject {
+impl IntoPy<PyObject> for bool {
     #[inline]
-    fn from_py(other: bool, py: Python) -> Self {
-        PyBool::new(py, other).into()
+    fn into_py(self, py: Python) -> PyObject {
+        PyBool::new(py, self).into()
     }
 }
 
-/// Converts a Python `bool` to a rust `bool`.
+/// Converts a Python `bool` to a Rust `bool`.
 ///
 /// Fails with `TypeError` if the input is not a Python `bool`.
 impl<'source> FromPyObject<'source> for bool {
@@ -62,29 +58,28 @@ impl<'source> FromPyObject<'source> for bool {
 }
 
 #[cfg(test)]
-mod test {
-    use crate::objectprotocol::ObjectProtocol;
+mod tests {
     use crate::types::{PyAny, PyBool};
     use crate::Python;
     use crate::ToPyObject;
 
     #[test]
     fn test_true() {
-        let gil = Python::acquire_gil();
-        let py = gil.python();
-        assert!(PyBool::new(py, true).is_true());
-        let t: &PyAny = PyBool::new(py, true).into();
-        assert_eq!(true, t.extract().unwrap());
-        assert_eq!(true.to_object(py), PyBool::new(py, true).into());
+        Python::with_gil(|py| {
+            assert!(PyBool::new(py, true).is_true());
+            let t: &PyAny = PyBool::new(py, true).into();
+            assert!(t.extract::<bool>().unwrap());
+            assert_eq!(true.to_object(py), PyBool::new(py, true).into());
+        });
     }
 
     #[test]
     fn test_false() {
-        let gil = Python::acquire_gil();
-        let py = gil.python();
-        assert!(!PyBool::new(py, false).is_true());
-        let t: &PyAny = PyBool::new(py, false).into();
-        assert_eq!(false, t.extract().unwrap());
-        assert_eq!(false.to_object(py), PyBool::new(py, false).into());
+        Python::with_gil(|py| {
+            assert!(!PyBool::new(py, false).is_true());
+            let t: &PyAny = PyBool::new(py, false).into();
+            assert!(!t.extract::<bool>().unwrap());
+            assert_eq!(false.to_object(py), PyBool::new(py, false).into());
+        });
     }
 }

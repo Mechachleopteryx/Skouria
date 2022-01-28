@@ -1,13 +1,11 @@
 use crate::ffi::object::*;
 use crate::ffi::pyport::Py_ssize_t;
 use libc::size_t;
-use std::os::raw::{
-    c_char, c_double, c_int, c_long, c_longlong, c_uchar, c_ulong, c_ulonglong, c_void,
-};
+#[cfg(not(Py_LIMITED_API))]
+use std::os::raw::c_uchar;
+use std::os::raw::{c_char, c_double, c_int, c_long, c_longlong, c_ulong, c_ulonglong, c_void};
 
-/// This is an opaque type in the python c api
-#[repr(transparent)]
-pub struct PyLongObject(*mut c_void);
+opaque_struct!(PyLongObject);
 
 #[cfg_attr(windows, link(name = "pythonXY"))]
 extern "C" {
@@ -25,7 +23,6 @@ pub unsafe fn PyLong_CheckExact(op: *mut PyObject) -> c_int {
     (Py_TYPE(op) == &mut PyLong_Type) as c_int
 }
 
-#[cfg_attr(windows, link(name = "pythonXY"))]
 extern "C" {
     #[cfg_attr(PyPy, link_name = "PyPyLong_FromLong")]
     pub fn PyLong_FromLong(arg1: c_long) -> *mut PyObject;
@@ -49,7 +46,24 @@ extern "C" {
     pub fn PyLong_AsUnsignedLong(arg1: *mut PyObject) -> c_ulong;
     #[cfg_attr(PyPy, link_name = "PyPyLong_AsUnsignedLongMask")]
     pub fn PyLong_AsUnsignedLongMask(arg1: *mut PyObject) -> c_ulong;
+    // skipped non-limited _PyLong_AsInt
     pub fn PyLong_GetInfo() -> *mut PyObject;
+    // skipped PyLong_AS_LONG
+
+    // skipped PyLong_FromPid
+    // skipped PyLong_AsPid
+    // skipped _Py_PARSE_INTPTR
+    // skipped _Py_PARSE_UINTPTR
+
+    // skipped non-limited _PyLong_UnsignedShort_Converter
+    // skipped non-limited _PyLong_UnsignedInt_Converter
+    // skipped non-limited _PyLong_UnsignedLong_Converter
+    // skipped non-limited _PyLong_UnsignedLongLong_Converter
+    // skipped non-limited _PyLong_Size_t_Converter
+
+    // skipped non-limited _PyLong_DigitValue
+    // skipped non-limited _PyLong_Frexp
+
     #[cfg_attr(PyPy, link_name = "PyPyLong_AsDouble")]
     pub fn PyLong_AsDouble(arg1: *mut PyObject) -> c_double;
     #[cfg_attr(PyPy, link_name = "PyPyLong_FromVoidPtr")]
@@ -74,14 +88,18 @@ extern "C" {
         arg2: *mut *mut c_char,
         arg3: c_int,
     ) -> *mut PyObject;
-    pub fn PyOS_strtoul(arg1: *const c_char, arg2: *mut *mut c_char, arg3: c_int) -> c_ulong;
-    pub fn PyOS_strtol(arg1: *const c_char, arg2: *mut *mut c_char, arg3: c_int) -> c_long;
 }
+// skipped non-limited PyLong_FromUnicodeObject
+// skipped non-limited _PyLong_FromBytes
 
 #[cfg(not(Py_LIMITED_API))]
-#[cfg_attr(windows, link(name = "pythonXY"))]
 extern "C" {
+    // skipped non-limited _PyLong_Sign
+
+    #[cfg(not(PyPy))]
     pub fn _PyLong_NumBits(obj: *mut PyObject) -> c_int;
+
+    // skipped _PyLong_DivmodNear
 
     #[cfg_attr(PyPy, link_name = "_PyPyLong_FromByteArray")]
     pub fn _PyLong_FromByteArray(
@@ -91,11 +109,26 @@ extern "C" {
         is_signed: c_int,
     ) -> *mut PyObject;
 
+    #[cfg(not(PyPy))]
     pub fn _PyLong_AsByteArray(
         v: *mut PyLongObject,
-        bytes: *const c_uchar,
+        bytes: *mut c_uchar,
         n: size_t,
         little_endian: c_int,
         is_signed: c_int,
     ) -> c_int;
 }
+
+// skipped non-limited _PyLong_Format
+// skipped non-limited _PyLong_FormatWriter
+// skipped non-limited _PyLong_FormatBytesWriter
+// skipped non-limited _PyLong_FormatAdvancedWriter
+
+extern "C" {
+    pub fn PyOS_strtoul(arg1: *const c_char, arg2: *mut *mut c_char, arg3: c_int) -> c_ulong;
+    pub fn PyOS_strtol(arg1: *const c_char, arg2: *mut *mut c_char, arg3: c_int) -> c_long;
+}
+
+// skipped non-limited _PyLong_GCD
+// skipped non-limited _PyLong_Rshift
+// skipped non-limited _PyLong_Lshift

@@ -1,55 +1,68 @@
 // Copyright (c) 2017-present PyO3 Project and Contributors
 
-//! Exception types defined by python.
+//! Exception types defined by Python.
+//!
+//! The structs in this module represent Python's built-in exceptions, while the modules comprise
+//! structs representing errors defined in Python code.
+//!
+//! The latter are created with the [`import_exception`] macro, which you can use yourself
+//! to import Python exceptions.
 
-use crate::err::{PyErr, PyResult};
-use crate::ffi;
-use crate::type_object::PyTypeObject;
-use crate::types::{PyAny, PyTuple};
-use crate::Python;
-use crate::{AsPyPointer, ToPyObject};
+use crate::{ffi, PyResult, Python};
 use std::ffi::CStr;
+use std::ops;
 use std::os::raw::c_char;
-use std::{self, ops};
 
-/// The boilerplate to convert between a rust type and a python exception
+/// The boilerplate to convert between a Rust type and a Python exception.
+#[doc(hidden)]
 #[macro_export]
 macro_rules! impl_exception_boilerplate {
     ($name: ident) => {
-        impl ::std::convert::From<$name> for $crate::PyErr {
-            fn from(_err: $name) -> $crate::PyErr {
-                $crate::PyErr::new::<$name, _>(())
-            }
-        }
-
-        impl<T> ::std::convert::Into<$crate::PyResult<T>> for $name {
-            fn into(self) -> $crate::PyResult<T> {
-                $crate::PyErr::new::<$name, _>(()).into()
+        impl ::std::convert::From<&$name> for $crate::PyErr {
+            #[inline]
+            fn from(err: &$name) -> $crate::PyErr {
+                $crate::PyErr::from_value(err)
             }
         }
 
         impl $name {
-            pub fn py_err<T: $crate::ToPyObject + 'static>(args: T) -> $crate::PyErr {
-                $crate::PyErr::new::<Self, T>(args)
+            /// Creates a new [`PyErr`] of this type.
+            ///
+            /// [`PyErr`]: https://docs.rs/pyo3/latest/pyo3/struct.PyErr.html "PyErr in pyo3"
+            #[inline]
+            pub fn new_err<A>(args: A) -> $crate::PyErr
+            where
+                A: $crate::PyErrArguments + ::std::marker::Send + ::std::marker::Sync + 'static,
+            {
+                $crate::PyErr::new::<$name, A>(args)
             }
+        }
 
-            pub fn into<R, T: $crate::ToPyObject + 'static>(args: T) -> $crate::PyResult<R> {
-                $crate::PyErr::new::<Self, T>(args).into()
+        impl ::std::error::Error for $name {
+            fn source(&self) -> ::std::option::Option<&(dyn ::std::error::Error + 'static)> {
+                unsafe {
+                    use $crate::AsPyPointer;
+                    let cause: &$crate::exceptions::PyBaseException = self
+                        .py()
+                        .from_owned_ptr_or_opt($crate::ffi::PyException_GetCause(self.as_ptr()))?;
+
+                    ::std::option::Option::Some(cause)
+                }
             }
         }
     };
 }
 
-/// Defines rust type for exception defined in Python code.
+/// Defines a Rust type for an exception defined in Python code.
 ///
 /// # Syntax
 ///
-/// `import_exception!(module, MyError)`
+/// ```import_exception!(module, MyError)```
 ///
 /// * `module` is the name of the containing module.
 /// * `MyError` is the name of the new exception type.
 ///
-/// # Example
+/// # Examples
 /// ```
 /// use pyo3::import_exception;
 /// use pyo3::types::IntoPyDict;
@@ -57,63 +70,56 @@ macro_rules! impl_exception_boilerplate {
 ///
 /// import_exception!(socket, gaierror);
 ///
-/// fn main() {
-///     let gil = Python::acquire_gil();
-///     let py = gil.python();
-///
+/// Python::with_gil(|py| {
 ///     let ctx = [("gaierror", py.get_type::<gaierror>())].into_py_dict(py);
-///     py.run(
-///         "import socket; assert gaierror is socket.gaierror",
-///         None,
-///         Some(ctx),
-///     )
-///     .unwrap();
-/// }
+///     pyo3::py_run!(py, *ctx, "import socket; assert gaierror is socket.gaierror");
+/// });
 ///
 /// ```
 #[macro_export]
 macro_rules! import_exception {
     ($module: expr, $name: ident) => {
+        /// A Rust type representing an exception defined in Python code.
+        ///
+        /// This type was created by the [`pyo3::import_exception!`] macro - see its documentation
+        /// for more information.
+        ///
+        /// [`pyo3::import_exception!`]: https://docs.rs/pyo3/latest/pyo3/macro.import_exception.html "import_exception in pyo3"
+        #[repr(transparent)]
         #[allow(non_camel_case_types)] // E.g. `socket.herror`
-        pub struct $name;
+        pub struct $name($crate::PyAny);
 
         $crate::impl_exception_boilerplate!($name);
 
-        $crate::import_exception_type_object!($module, $name);
-    };
-}
+        $crate::pyobject_native_type_core!(
+            $name,
+            *$name::type_object_raw($crate::Python::assume_gil_acquired()),
+            #module=::std::option::Option::Some(stringify!($module))
+        );
 
-/// `impl $crate::type_object::PyTypeObject for $name` where `$name` is an exception defined in python
-/// code.
-#[macro_export]
-macro_rules! import_exception_type_object {
-    ($module: expr, $name: ident) => {
-        unsafe impl $crate::type_object::PyTypeObject for $name {
-            fn init_type() -> std::ptr::NonNull<$crate::ffi::PyTypeObject> {
-                // We can't use lazy_static here because raw pointers aren't Send
-                static TYPE_OBJECT_ONCE: ::std::sync::Once = ::std::sync::Once::new();
-                static mut TYPE_OBJECT: *mut $crate::ffi::PyTypeObject = ::std::ptr::null_mut();
+        impl $name {
+            fn type_object_raw(py: $crate::Python) -> *mut $crate::ffi::PyTypeObject {
+                use $crate::once_cell::GILOnceCell;
+                use $crate::AsPyPointer;
+                static TYPE_OBJECT: GILOnceCell<$crate::Py<$crate::types::PyType>> =
+                    GILOnceCell::new();
 
-                TYPE_OBJECT_ONCE.call_once(|| {
-                    let gil = $crate::Python::acquire_gil();
-                    let py = gil.python();
-
-                    unsafe {
+                TYPE_OBJECT
+                    .get_or_init(py, || {
                         let imp = py
                             .import(stringify!($module))
                             .expect(concat!("Can not import module: ", stringify!($module)));
-                        let cls = imp.get(stringify!($name)).expect(concat!(
+                        let cls = imp.getattr(stringify!($name)).expect(concat!(
                             "Can not load exception class: {}.{}",
                             stringify!($module),
                             ".",
                             stringify!($name)
                         ));
-                        TYPE_OBJECT =
-                            $crate::IntoPyPointer::into_ptr(cls) as *mut $crate::ffi::PyTypeObject;
-                    }
-                });
 
-                unsafe { std::ptr::NonNull::new_unchecked(TYPE_OBJECT) }
+                        cls.extract()
+                            .expect("Imported exception should be a type object")
+                    })
+                    .as_ptr() as *mut _
             }
         }
     };
@@ -122,188 +128,472 @@ macro_rules! import_exception_type_object {
 /// Defines a new exception type.
 ///
 /// # Syntax
-/// `create_exception!(module, MyError, BaseException)`
 ///
 /// * `module` is the name of the containing module.
-/// * `MyError` is the name of the new exception type.
-/// * `BaseException` is the superclass of MyError, usually `pyo3::exceptions::Exception`
+/// * `name` is the name of the new exception type.
+/// * `base` is the base class of `MyError`, usually [`PyException`].
+/// * `doc` (optional) is the docstring visible to users (with `.__doc__` and `help()`) and
+/// accompanies your error type in your crate's documentation.
 ///
-/// # Example
+/// # Examples
+///
 /// ```
 /// use pyo3::prelude::*;
 /// use pyo3::create_exception;
-/// use pyo3::types::IntoPyDict;
-/// use pyo3::exceptions::Exception;
+/// use pyo3::exceptions::PyException;
 ///
-/// create_exception!(mymodule, CustomError, Exception);
+/// create_exception!(my_module, MyError, PyException, "Some description.");
 ///
-/// fn main() {
-///     let gil = Python::acquire_gil();
-///     let py = gil.python();
-///     let error_type = py.get_type::<CustomError>();
-///     let ctx = [("CustomError", error_type)].into_py_dict(py);
-///     let type_description: String = py
-///         .eval("str(CustomError)", None, Some(&ctx))
-///         .unwrap()
-///         .extract()
-///         .unwrap();
-///     assert_eq!(type_description, "<class 'mymodule.CustomError'>");
-///     py.run(
-///         "assert CustomError('oops').args == ('oops',)",
-///         None,
-///         Some(ctx),
-///     )
-///     .unwrap();
+/// #[pyfunction]
+/// fn raise_myerror() -> PyResult<()>{
+///     let err = MyError::new_err("Some error happened.");
+///     Err(err)
 /// }
+///
+/// #[pymodule]
+/// fn my_module(py: Python, m: &PyModule) -> PyResult<()> {
+///     m.add("MyError", py.get_type::<MyError>())?;
+///     m.add_function(wrap_pyfunction!(raise_myerror, py)?)?;
+///     Ok(())
+/// }
+/// # fn main() -> PyResult<()> {
+/// #     Python::with_gil(|py| -> PyResult<()> {
+/// #         let fun = wrap_pyfunction!(raise_myerror, py)?;
+/// #         let locals = pyo3::types::PyDict::new(py);
+/// #         locals.set_item("MyError", py.get_type::<MyError>())?;
+/// #         locals.set_item("raise_myerror", fun)?;
+/// #
+/// #         py.run(
+/// # "try:
+/// #     raise_myerror()
+/// # except MyError as e:
+/// #     assert e.__doc__ == 'Some description.'
+/// #     assert str(e) == 'Some error happened.'",
+/// #             None,
+/// #             Some(locals),
+/// #         )?;
+/// #
+/// #         Ok(())
+/// #     })
+/// # }
 /// ```
+///
+/// Python code can handle this exception like any other exception:
+///
+/// ```python
+/// from my_module import MyError, raise_myerror
+///
+/// try:
+///     raise_myerror()
+/// except MyError as e:
+///     assert e.__doc__ == 'Some description.'
+///     assert str(e) == 'Some error happened.'
+/// ```
+///
 #[macro_export]
 macro_rules! create_exception {
     ($module: ident, $name: ident, $base: ty) => {
+        #[repr(transparent)]
         #[allow(non_camel_case_types)] // E.g. `socket.herror`
-        pub struct $name;
+        pub struct $name($crate::PyAny);
 
         $crate::impl_exception_boilerplate!($name);
 
-        $crate::create_exception_type_object!($module, $name, $base);
+        $crate::create_exception_type_object!($module, $name, $base, ::std::option::Option::None);
+    };
+    ($module: ident, $name: ident, $base: ty, $doc: expr) => {
+        #[repr(transparent)]
+        #[allow(non_camel_case_types)] // E.g. `socket.herror`
+        #[doc = $doc]
+        pub struct $name($crate::PyAny);
+
+        $crate::impl_exception_boilerplate!($name);
+
+        $crate::create_exception_type_object!(
+            $module,
+            $name,
+            $base,
+            ::std::option::Option::Some($doc)
+        );
     };
 }
 
-/// `impl $crate::type_object::PyTypeObject for $name` where `$name` is an exception newly defined in
-/// rust code.
+/// `impl $crate::type_object::PyTypeObject for $name` where `$name` is an
+/// exception newly defined in Rust code.
+#[doc(hidden)]
 #[macro_export]
 macro_rules! create_exception_type_object {
-    ($module: ident, $name: ident, $base: ty) => {
-        unsafe impl $crate::type_object::PyTypeObject for $name {
-            fn init_type() -> std::ptr::NonNull<$crate::ffi::PyTypeObject> {
-                // We can't use lazy_static here because raw pointers aren't Send
-                static TYPE_OBJECT_ONCE: ::std::sync::Once = ::std::sync::Once::new();
-                static mut TYPE_OBJECT: *mut $crate::ffi::PyTypeObject = ::std::ptr::null_mut();
+    ($module: ident, $name: ident, $base: ty, $doc: expr) => {
+        $crate::pyobject_native_type_core!(
+            $name,
+            *$name::type_object_raw($crate::Python::assume_gil_acquired()),
+            #module=::std::option::Option::Some(stringify!($module))
+        );
 
-                TYPE_OBJECT_ONCE.call_once(|| {
-                    let gil = $crate::Python::acquire_gil();
-                    let py = gil.python();
+        impl $name {
+            fn type_object_raw(py: $crate::Python) -> *mut $crate::ffi::PyTypeObject {
+                use $crate::once_cell::GILOnceCell;
+                use $crate::AsPyPointer;
+                static TYPE_OBJECT: GILOnceCell<$crate::Py<$crate::types::PyType>> =
+                    GILOnceCell::new();
 
-                    unsafe {
-                        TYPE_OBJECT = $crate::PyErr::new_type(
+                TYPE_OBJECT
+                    .get_or_init(py, ||
+                        $crate::PyErr::new_type(
                             py,
                             concat!(stringify!($module), ".", stringify!($name)),
-                            Some(py.get_type::<$base>()),
-                            None,
-                        );
-                    }
-                });
-
-                unsafe { std::ptr::NonNull::new_unchecked(TYPE_OBJECT) }
+                            $doc,
+                            ::std::option::Option::Some(py.get_type::<$base>()),
+                            ::std::option::Option::None,
+                        ).expect("Failed to initialize new exception type.")
+                ).as_ptr() as *mut $crate::ffi::PyTypeObject
             }
         }
     };
 }
 
 macro_rules! impl_native_exception (
-    ($name:ident, $exc_name:ident) => (
-        pub struct $name;
+    ($name:ident, $exc_name:ident, $doc:expr, $layout:path) => (
+        #[doc = $doc]
+        #[allow(clippy::upper_case_acronyms)]
+        pub struct $name($crate::PyAny);
 
-        impl std::convert::From<$name> for PyErr {
-            fn from(_err: $name) -> PyErr {
-                PyErr::new::<$name, _>(())
-            }
-        }
-        impl<T> std::convert::Into<$crate::PyResult<T>> for $name {
-            fn into(self) -> $crate::PyResult<T> {
-                PyErr::new::<$name, _>(()).into()
-            }
-        }
-        impl $name {
-            pub fn py_err<V: ToPyObject + 'static>(args: V) -> PyErr {
-                PyErr::new::<$name, V>(args)
-            }
-            pub fn into<R, V: ToPyObject + 'static>(args: V) -> PyResult<R> {
-                PyErr::new::<$name, V>(args).into()
-            }
-        }
-        unsafe impl PyTypeObject for $name {
-            fn init_type() -> std::ptr::NonNull<$crate::ffi::PyTypeObject> {
-                unsafe { std::ptr::NonNull::new_unchecked(ffi::$exc_name as *mut _) }
-            }
-        }
+        $crate::impl_exception_boilerplate!($name);
+        $crate::pyobject_native_type!($name, $layout, *($crate::ffi::$exc_name as *mut $crate::ffi::PyTypeObject));
+    );
+    ($name:ident, $exc_name:ident, $doc:expr) => (
+        impl_native_exception!($name, $exc_name, $doc, $crate::ffi::PyBaseExceptionObject);
+    )
+);
+
+#[cfg(windows)]
+macro_rules! impl_windows_native_exception (
+    ($name:ident, $exc_name:ident, $doc:expr, $layout:path) => (
+        #[cfg(windows)]
+        #[doc = $doc]
+        #[allow(clippy::upper_case_acronyms)]
+        pub struct $name($crate::PyAny);
+
+        $crate::impl_exception_boilerplate!($name);
+        $crate::pyobject_native_type!($name, $layout, *($crate::ffi::$exc_name as *mut $crate::ffi::PyTypeObject));
+    );
+    ($name:ident, $exc_name:ident, $doc:expr) => (
+        impl_windows_native_exception!($name, $exc_name, $doc, $crate::ffi::PyBaseExceptionObject);
+    )
+);
+
+macro_rules! native_doc(
+    ($name: literal, $alt: literal) => (
+        concat!(
+"Represents Python's [`", $name, "`](https://docs.python.org/3/library/exceptions.html#", $name, ") exception.
+
+", $alt
+        )
+    );
+    ($name: literal) => (
+        concat!(
+"
+Represents Python's [`", $name, "`](https://docs.python.org/3/library/exceptions.html#", $name, ") exception.
+
+# Example: Raising ", $name, " from Rust
+
+This exception can be sent to Python code by converting it into a
+[`PyErr`](crate::PyErr), where Python code can then catch it.
+```
+use pyo3::prelude::*;
+use pyo3::exceptions::Py", $name, ";
+
+#[pyfunction]
+fn always_throws() -> PyResult<()> {
+    let message = \"I'm ", $name ,", and I was raised from Rust.\";
+    Err(Py", $name, "::new_err(message))
+}
+#
+# Python::with_gil(|py| {
+#     let fun = pyo3::wrap_pyfunction!(always_throws, py).unwrap();
+#     let err = fun.call0().expect_err(\"called a function that should always return an error but the return value was Ok\");
+#     assert!(err.is_instance_of::<Py", $name, ">(py))
+# });
+```
+
+Python code:
+ ```python
+ from my_module import always_throws
+
+try:
+    always_throws()
+except ", $name, " as e:
+    print(f\"Caught an exception: {e}\")
+```
+
+# Example: Catching ", $name, " in Rust
+
+```
+use pyo3::prelude::*;
+use pyo3::exceptions::Py", $name, ";
+
+Python::with_gil(|py| {
+    let result: PyResult<()> = py.run(\"raise ", $name, "\", None, None);
+
+    let error_type = match result {
+        Ok(_) => \"Not an error\",
+        Err(error) if error.is_instance_of::<Py", $name, ">(py) => \"" , $name, "\",
+        Err(_) => \"Some other error\",
+    };
+
+    assert_eq!(error_type, \"", $name, "\");
+});
+```
+"
+        )
     );
 );
 
-impl_native_exception!(BaseException, PyExc_BaseException);
-impl_native_exception!(Exception, PyExc_Exception);
-impl_native_exception!(StopAsyncIteration, PyExc_StopAsyncIteration);
-impl_native_exception!(StopIteration, PyExc_StopIteration);
-impl_native_exception!(GeneratorExit, PyExc_GeneratorExit);
-impl_native_exception!(ArithmeticError, PyExc_ArithmeticError);
-impl_native_exception!(LookupError, PyExc_LookupError);
+impl_native_exception!(
+    PyBaseException,
+    PyExc_BaseException,
+    native_doc!("BaseException")
+);
+impl_native_exception!(PyException, PyExc_Exception, native_doc!("Exception"));
+impl_native_exception!(
+    PyStopAsyncIteration,
+    PyExc_StopAsyncIteration,
+    native_doc!("StopAsyncIteration")
+);
+impl_native_exception!(
+    PyStopIteration,
+    PyExc_StopIteration,
+    native_doc!("StopIteration"),
+    ffi::PyStopIterationObject
+);
+impl_native_exception!(
+    PyGeneratorExit,
+    PyExc_GeneratorExit,
+    native_doc!("GeneratorExit")
+);
+impl_native_exception!(
+    PyArithmeticError,
+    PyExc_ArithmeticError,
+    native_doc!("ArithmeticError")
+);
+impl_native_exception!(PyLookupError, PyExc_LookupError, native_doc!("LookupError"));
 
-impl_native_exception!(AssertionError, PyExc_AssertionError);
-impl_native_exception!(AttributeError, PyExc_AttributeError);
-impl_native_exception!(BufferError, PyExc_BufferError);
-impl_native_exception!(EOFError, PyExc_EOFError);
-impl_native_exception!(FloatingPointError, PyExc_FloatingPointError);
-impl_native_exception!(OSError, PyExc_OSError);
-impl_native_exception!(ImportError, PyExc_ImportError);
+impl_native_exception!(
+    PyAssertionError,
+    PyExc_AssertionError,
+    native_doc!("AssertionError")
+);
+impl_native_exception!(
+    PyAttributeError,
+    PyExc_AttributeError,
+    native_doc!("AttributeError")
+);
+impl_native_exception!(PyBufferError, PyExc_BufferError, native_doc!("BufferError"));
+impl_native_exception!(PyEOFError, PyExc_EOFError, native_doc!("EOFError"));
+impl_native_exception!(
+    PyFloatingPointError,
+    PyExc_FloatingPointError,
+    native_doc!("FloatingPointError")
+);
+impl_native_exception!(
+    PyOSError,
+    PyExc_OSError,
+    native_doc!("OSError"),
+    ffi::PyOSErrorObject
+);
+impl_native_exception!(PyImportError, PyExc_ImportError, native_doc!("ImportError"));
 
-#[cfg(Py_3_6)]
-impl_native_exception!(ModuleNotFoundError, PyExc_ModuleNotFoundError);
+impl_native_exception!(
+    PyModuleNotFoundError,
+    PyExc_ModuleNotFoundError,
+    native_doc!("ModuleNotFoundError")
+);
 
-impl_native_exception!(IndexError, PyExc_IndexError);
-impl_native_exception!(KeyError, PyExc_KeyError);
-impl_native_exception!(KeyboardInterrupt, PyExc_KeyboardInterrupt);
-impl_native_exception!(MemoryError, PyExc_MemoryError);
-impl_native_exception!(NameError, PyExc_NameError);
-impl_native_exception!(OverflowError, PyExc_OverflowError);
-impl_native_exception!(RuntimeError, PyExc_RuntimeError);
-impl_native_exception!(RecursionError, PyExc_RecursionError);
-impl_native_exception!(NotImplementedError, PyExc_NotImplementedError);
-impl_native_exception!(SyntaxError, PyExc_SyntaxError);
-impl_native_exception!(ReferenceError, PyExc_ReferenceError);
-impl_native_exception!(SystemError, PyExc_SystemError);
-impl_native_exception!(SystemExit, PyExc_SystemExit);
-impl_native_exception!(TypeError, PyExc_TypeError);
-impl_native_exception!(UnboundLocalError, PyExc_UnboundLocalError);
-impl_native_exception!(UnicodeError, PyExc_UnicodeError);
-impl_native_exception!(UnicodeDecodeError, PyExc_UnicodeDecodeError);
-impl_native_exception!(UnicodeEncodeError, PyExc_UnicodeEncodeError);
-impl_native_exception!(UnicodeTranslateError, PyExc_UnicodeTranslateError);
-impl_native_exception!(ValueError, PyExc_ValueError);
-impl_native_exception!(ZeroDivisionError, PyExc_ZeroDivisionError);
+impl_native_exception!(PyIndexError, PyExc_IndexError, native_doc!("IndexError"));
+impl_native_exception!(PyKeyError, PyExc_KeyError, native_doc!("KeyError"));
+impl_native_exception!(
+    PyKeyboardInterrupt,
+    PyExc_KeyboardInterrupt,
+    native_doc!("KeyboardInterrupt")
+);
+impl_native_exception!(PyMemoryError, PyExc_MemoryError, native_doc!("MemoryError"));
+impl_native_exception!(PyNameError, PyExc_NameError, native_doc!("NameError"));
+impl_native_exception!(
+    PyOverflowError,
+    PyExc_OverflowError,
+    native_doc!("OverflowError")
+);
+impl_native_exception!(
+    PyRuntimeError,
+    PyExc_RuntimeError,
+    native_doc!("RuntimeError")
+);
+impl_native_exception!(
+    PyRecursionError,
+    PyExc_RecursionError,
+    native_doc!("RecursionError")
+);
+impl_native_exception!(
+    PyNotImplementedError,
+    PyExc_NotImplementedError,
+    native_doc!("NotImplementedError")
+);
+impl_native_exception!(
+    PySyntaxError,
+    PyExc_SyntaxError,
+    native_doc!("SyntaxError"),
+    ffi::PySyntaxErrorObject
+);
+impl_native_exception!(
+    PyReferenceError,
+    PyExc_ReferenceError,
+    native_doc!("ReferenceError")
+);
+impl_native_exception!(PySystemError, PyExc_SystemError, native_doc!("SystemError"));
+impl_native_exception!(
+    PySystemExit,
+    PyExc_SystemExit,
+    native_doc!("SystemExit"),
+    ffi::PySystemExitObject
+);
+impl_native_exception!(PyTypeError, PyExc_TypeError, native_doc!("TypeError"));
+impl_native_exception!(
+    PyUnboundLocalError,
+    PyExc_UnboundLocalError,
+    native_doc!("UnboundLocalError")
+);
+impl_native_exception!(
+    PyUnicodeError,
+    PyExc_UnicodeError,
+    native_doc!("UnicodeError"),
+    ffi::PyUnicodeErrorObject
+);
+// these three errors need arguments, so they're too annoying to write tests for using macros...
+impl_native_exception!(
+    PyUnicodeDecodeError,
+    PyExc_UnicodeDecodeError,
+    native_doc!("UnicodeDecodeError", "")
+);
+impl_native_exception!(
+    PyUnicodeEncodeError,
+    PyExc_UnicodeEncodeError,
+    native_doc!("UnicodeEncodeError", "")
+);
+impl_native_exception!(
+    PyUnicodeTranslateError,
+    PyExc_UnicodeTranslateError,
+    native_doc!("UnicodeTranslateError", "")
+);
+impl_native_exception!(PyValueError, PyExc_ValueError, native_doc!("ValueError"));
+impl_native_exception!(
+    PyZeroDivisionError,
+    PyExc_ZeroDivisionError,
+    native_doc!("ZeroDivisionError")
+);
 
-impl_native_exception!(BlockingIOError, PyExc_BlockingIOError);
-impl_native_exception!(BrokenPipeError, PyExc_BrokenPipeError);
-impl_native_exception!(ChildProcessError, PyExc_ChildProcessError);
-impl_native_exception!(ConnectionError, PyExc_ConnectionError);
-impl_native_exception!(ConnectionAbortedError, PyExc_ConnectionAbortedError);
-impl_native_exception!(ConnectionRefusedError, PyExc_ConnectionRefusedError);
-impl_native_exception!(ConnectionResetError, PyExc_ConnectionResetError);
-impl_native_exception!(FileExistsError, PyExc_FileExistsError);
-impl_native_exception!(FileNotFoundError, PyExc_FileNotFoundError);
-impl_native_exception!(InterruptedError, PyExc_InterruptedError);
-impl_native_exception!(IsADirectoryError, PyExc_IsADirectoryError);
-impl_native_exception!(NotADirectoryError, PyExc_NotADirectoryError);
-impl_native_exception!(PermissionError, PyExc_PermissionError);
-impl_native_exception!(ProcessLookupError, PyExc_ProcessLookupError);
-impl_native_exception!(TimeoutError, PyExc_TimeoutError);
+impl_native_exception!(
+    PyBlockingIOError,
+    PyExc_BlockingIOError,
+    native_doc!("BlockingIOError")
+);
+impl_native_exception!(
+    PyBrokenPipeError,
+    PyExc_BrokenPipeError,
+    native_doc!("BrokenPipeError")
+);
+impl_native_exception!(
+    PyChildProcessError,
+    PyExc_ChildProcessError,
+    native_doc!("ChildProcessError")
+);
+impl_native_exception!(
+    PyConnectionError,
+    PyExc_ConnectionError,
+    native_doc!("ConnectionError")
+);
+impl_native_exception!(
+    PyConnectionAbortedError,
+    PyExc_ConnectionAbortedError,
+    native_doc!("ConnectionAbortedError")
+);
+impl_native_exception!(
+    PyConnectionRefusedError,
+    PyExc_ConnectionRefusedError,
+    native_doc!("ConnectionRefusedError")
+);
+impl_native_exception!(
+    PyConnectionResetError,
+    PyExc_ConnectionResetError,
+    native_doc!("ConnectionResetError")
+);
+impl_native_exception!(
+    PyFileExistsError,
+    PyExc_FileExistsError,
+    native_doc!("FileExistsError")
+);
+impl_native_exception!(
+    PyFileNotFoundError,
+    PyExc_FileNotFoundError,
+    native_doc!("FileNotFoundError")
+);
+impl_native_exception!(
+    PyInterruptedError,
+    PyExc_InterruptedError,
+    native_doc!("InterruptedError")
+);
+impl_native_exception!(
+    PyIsADirectoryError,
+    PyExc_IsADirectoryError,
+    native_doc!("IsADirectoryError")
+);
+impl_native_exception!(
+    PyNotADirectoryError,
+    PyExc_NotADirectoryError,
+    native_doc!("NotADirectoryError")
+);
+impl_native_exception!(
+    PyPermissionError,
+    PyExc_PermissionError,
+    native_doc!("PermissionError")
+);
+impl_native_exception!(
+    PyProcessLookupError,
+    PyExc_ProcessLookupError,
+    native_doc!("ProcessLookupError")
+);
+impl_native_exception!(
+    PyTimeoutError,
+    PyExc_TimeoutError,
+    native_doc!("TimeoutError")
+);
 
-impl_native_exception!(EnvironmentError, PyExc_EnvironmentError);
-impl_native_exception!(IOError, PyExc_IOError);
-#[cfg(target_os = "windows")]
-impl_native_exception!(WindowsError, PyExc_WindowsError);
+impl_native_exception!(
+    PyEnvironmentError,
+    PyExc_EnvironmentError,
+    native_doc!("EnvironmentError")
+);
+impl_native_exception!(PyIOError, PyExc_IOError, native_doc!("IOError"));
 
-impl UnicodeDecodeError {
-    pub fn new_err<'p>(
+#[cfg(windows)]
+impl_windows_native_exception!(
+    PyWindowsError,
+    PyExc_WindowsError,
+    native_doc!("WindowsError")
+);
+
+impl PyUnicodeDecodeError {
+    /// Creates a Python `UnicodeDecodeError`.
+    pub fn new<'p>(
         py: Python<'p>,
         encoding: &CStr,
         input: &[u8],
         range: ops::Range<usize>,
         reason: &CStr,
-    ) -> PyResult<&'p PyAny> {
+    ) -> PyResult<&'p PyUnicodeDecodeError> {
         unsafe {
-            let input: &[c_char] = &*(input as *const [u8] as *const [c_char]);
             py.from_owned_ptr_or_err(ffi::PyUnicodeDecodeError_Create(
                 encoding.as_ptr(),
-                input.as_ptr(),
+                input.as_ptr() as *const c_char,
                 input.len() as ffi::Py_ssize_t,
                 range.start as ffi::Py_ssize_t,
                 range.end as ffi::Py_ssize_t,
@@ -312,35 +602,76 @@ impl UnicodeDecodeError {
         }
     }
 
-    #[allow(clippy::range_plus_one)] // False positive, ..= returns the wrong type
+    /// Creates a Python `UnicodeDecodeError` from a Rust UTF-8 decoding error.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use pyo3::prelude::*;
+    /// use pyo3::exceptions::PyUnicodeDecodeError;
+    ///
+    /// # fn main() -> PyResult<()> {
+    /// Python::with_gil(|py|{
+    ///     let invalid_utf8 = b"fo\xd8o";
+    ///     let err = std::str::from_utf8(invalid_utf8).expect_err("should be invalid utf8");
+    ///     let decode_err = PyUnicodeDecodeError::new_utf8(py, invalid_utf8, err)?;
+    ///     assert_eq!(
+    ///         decode_err.to_string(),
+    ///         "'utf-8' codec can't decode byte 0xd8 in position 2: invalid utf-8"
+    ///     );
+    ///     Ok(())
+    /// })
+    /// # }
     pub fn new_utf8<'p>(
         py: Python<'p>,
         input: &[u8],
         err: std::str::Utf8Error,
-    ) -> PyResult<&'p PyAny> {
+    ) -> PyResult<&'p PyUnicodeDecodeError> {
         let pos = err.valid_up_to();
-        UnicodeDecodeError::new_err(
+        PyUnicodeDecodeError::new(
             py,
             CStr::from_bytes_with_nul(b"utf-8\0").unwrap(),
             input,
-            pos..pos + 1,
+            pos..(pos + 1),
             CStr::from_bytes_with_nul(b"invalid utf-8\0").unwrap(),
         )
     }
 }
 
-impl StopIteration {
-    pub fn stop_iteration(_py: Python, args: &PyTuple) {
-        unsafe {
-            ffi::PyErr_SetObject(
-                ffi::PyExc_StopIteration as *mut ffi::PyObject,
-                args.as_ptr(),
-            );
+#[cfg(test)]
+macro_rules! test_exception {
+    ($exc_ty:ident $(, $constructor:expr)?) => {
+        #[allow(non_snake_case)]
+        #[test]
+        fn $exc_ty () {
+            use super::$exc_ty;
+
+            $crate::Python::with_gil(|py| {
+                use std::error::Error;
+                let err: $crate::PyErr = {
+                    None
+                    $(
+                        .or(Some($constructor(py)))
+                    )?
+                        .unwrap_or($exc_ty::new_err("a test exception"))
+                };
+
+                assert!(err.is_instance_of::<$exc_ty>(py));
+
+                let value: &$exc_ty = err.value(py).downcast().unwrap();
+                assert!(value.source().is_none());
+
+                err.set_cause(py, Some($crate::exceptions::PyValueError::new_err("a cause")));
+                assert!(value.source().is_some());
+
+                assert!($crate::PyErr::from(value).is_instance_of::<$exc_ty>(py));
+            })
         }
-    }
+    };
 }
 
-/// Exceptions defined in `asyncio` module
+/// Exceptions defined in Python's [`asyncio`](https://docs.python.org/3/library/asyncio.html)
+/// module.
 pub mod asyncio {
     import_exception!(asyncio, CancelledError);
     import_exception!(asyncio, InvalidStateError);
@@ -349,19 +680,41 @@ pub mod asyncio {
     import_exception!(asyncio, LimitOverrunError);
     import_exception!(asyncio, QueueEmpty);
     import_exception!(asyncio, QueueFull);
+
+    #[cfg(test)]
+    mod tests {
+        test_exception!(CancelledError);
+        test_exception!(InvalidStateError);
+        test_exception!(TimeoutError);
+        test_exception!(IncompleteReadError, |_| {
+            IncompleteReadError::new_err(("partial", "expected"))
+        });
+        test_exception!(LimitOverrunError, |_| {
+            LimitOverrunError::new_err(("message", "consumed"))
+        });
+        test_exception!(QueueEmpty);
+        test_exception!(QueueFull);
+    }
 }
 
-/// Exceptions defined in `socket` module
+/// Exceptions defined in Python's [`socket`](https://docs.python.org/3/library/socket.html)
+/// module.
 pub mod socket {
     import_exception!(socket, herror);
     import_exception!(socket, gaierror);
     import_exception!(socket, timeout);
+
+    #[cfg(test)]
+    mod tests {
+        test_exception!(herror);
+        test_exception!(gaierror);
+        test_exception!(timeout);
+    }
 }
 
 #[cfg(test)]
-mod test {
-    use crate::exceptions::Exception;
-    use crate::objectprotocol::ObjectProtocol;
+mod tests {
+    use super::*;
     use crate::types::{IntoPyDict, PyDict};
     use crate::{PyErr, Python};
 
@@ -370,75 +723,276 @@ mod test {
 
     #[test]
     fn test_check_exception() {
-        let gil = Python::acquire_gil();
-        let py = gil.python();
+        Python::with_gil(|py| {
+            let err: PyErr = gaierror::new_err(());
+            let socket = py
+                .import("socket")
+                .map_err(|e| e.print(py))
+                .expect("could not import socket");
 
-        let err: PyErr = gaierror.into();
-        let socket = py
-            .import("socket")
-            .map_err(|e| e.print(py))
-            .expect("could not import socket");
+            let d = PyDict::new(py);
+            d.set_item("socket", socket)
+                .map_err(|e| e.print(py))
+                .expect("could not setitem");
 
-        let d = PyDict::new(py);
-        d.set_item("socket", socket)
-            .map_err(|e| e.print(py))
-            .expect("could not setitem");
-        d.set_item("exc", err)
-            .map_err(|e| e.print(py))
-            .expect("could not setitem");
+            d.set_item("exc", err)
+                .map_err(|e| e.print(py))
+                .expect("could not setitem");
 
-        py.run("assert isinstance(exc, socket.gaierror)", None, Some(d))
-            .map_err(|e| e.print(py))
-            .expect("assertion failed");
+            py.run("assert isinstance(exc, socket.gaierror)", None, Some(d))
+                .map_err(|e| e.print(py))
+                .expect("assertion failed");
+        });
     }
 
     #[test]
     fn test_check_exception_nested() {
-        let gil = Python::acquire_gil();
-        let py = gil.python();
+        Python::with_gil(|py| {
+            let err: PyErr = MessageError::new_err(());
+            let email = py
+                .import("email")
+                .map_err(|e| e.print(py))
+                .expect("could not import email");
 
-        let err: PyErr = MessageError.into();
-        let email = py
-            .import("email")
-            .map_err(|e| e.print(py))
-            .expect("could not import email");
+            let d = PyDict::new(py);
+            d.set_item("email", email)
+                .map_err(|e| e.print(py))
+                .expect("could not setitem");
+            d.set_item("exc", err)
+                .map_err(|e| e.print(py))
+                .expect("could not setitem");
 
-        let d = PyDict::new(py);
-        d.set_item("email", email)
+            py.run(
+                "assert isinstance(exc, email.errors.MessageError)",
+                None,
+                Some(d),
+            )
             .map_err(|e| e.print(py))
-            .expect("could not setitem");
-        d.set_item("exc", err)
-            .map_err(|e| e.print(py))
-            .expect("could not setitem");
-
-        py.run(
-            "assert isinstance(exc, email.errors.MessageError)",
-            None,
-            Some(d),
-        )
-        .map_err(|e| e.print(py))
-        .expect("assertion failed");
+            .expect("assertion failed");
+        });
     }
 
     #[test]
     fn custom_exception() {
-        create_exception!(mymodule, CustomError, Exception);
+        create_exception!(mymodule, CustomError, PyException);
 
-        let gil = Python::acquire_gil();
-        let py = gil.python();
-        let error_type = py.get_type::<CustomError>();
-        let ctx = [("CustomError", error_type)].into_py_dict(py);
-        let type_description: String = py
-            .eval("str(CustomError)", None, Some(&ctx))
-            .unwrap()
-            .extract()
+        Python::with_gil(|py| {
+            let error_type = py.get_type::<CustomError>();
+            let ctx = [("CustomError", error_type)].into_py_dict(py);
+            let type_description: String = py
+                .eval("str(CustomError)", None, Some(ctx))
+                .unwrap()
+                .extract()
+                .unwrap();
+            assert_eq!(type_description, "<class 'mymodule.CustomError'>");
+            py.run(
+                "assert CustomError('oops').args == ('oops',)",
+                None,
+                Some(ctx),
+            )
             .unwrap();
-        assert_eq!(type_description, "<class 'mymodule.CustomError'>");
-        py.run(
-            "assert CustomError('oops').args == ('oops',)",
-            None,
-            Some(&ctx),
-        )
-        .unwrap();
+            py.run("assert CustomError.__doc__ is None", None, Some(ctx))
+                .unwrap();
+        });
     }
+
+    #[test]
+    fn custom_exception_doc() {
+        create_exception!(mymodule, CustomError, PyException, "Some docs");
+
+        Python::with_gil(|py| {
+            let error_type = py.get_type::<CustomError>();
+            let ctx = [("CustomError", error_type)].into_py_dict(py);
+            let type_description: String = py
+                .eval("str(CustomError)", None, Some(ctx))
+                .unwrap()
+                .extract()
+                .unwrap();
+            assert_eq!(type_description, "<class 'mymodule.CustomError'>");
+            py.run(
+                "assert CustomError('oops').args == ('oops',)",
+                None,
+                Some(ctx),
+            )
+            .unwrap();
+            py.run("assert CustomError.__doc__ == 'Some docs'", None, Some(ctx))
+                .unwrap();
+        });
+    }
+
+    #[test]
+    fn custom_exception_doc_expr() {
+        create_exception!(
+            mymodule,
+            CustomError,
+            PyException,
+            concat!("Some", " more ", stringify!(docs))
+        );
+
+        Python::with_gil(|py| {
+            let error_type = py.get_type::<CustomError>();
+            let ctx = [("CustomError", error_type)].into_py_dict(py);
+            let type_description: String = py
+                .eval("str(CustomError)", None, Some(ctx))
+                .unwrap()
+                .extract()
+                .unwrap();
+            assert_eq!(type_description, "<class 'mymodule.CustomError'>");
+            py.run(
+                "assert CustomError('oops').args == ('oops',)",
+                None,
+                Some(ctx),
+            )
+            .unwrap();
+            py.run(
+                "assert CustomError.__doc__ == 'Some more docs'",
+                None,
+                Some(ctx),
+            )
+            .unwrap();
+        });
+    }
+
+    #[test]
+    fn native_exception_debug() {
+        Python::with_gil(|py| {
+            let exc = py
+                .run("raise Exception('banana')", None, None)
+                .expect_err("raising should have given us an error")
+                .into_value(py)
+                .into_ref(py);
+            assert_eq!(
+                format!("{:?}", exc),
+                exc.repr().unwrap().extract::<String>().unwrap()
+            );
+        });
+    }
+
+    #[test]
+    fn native_exception_display() {
+        Python::with_gil(|py| {
+            let exc = py
+                .run("raise Exception('banana')", None, None)
+                .expect_err("raising should have given us an error")
+                .into_value(py)
+                .into_ref(py);
+            assert_eq!(
+                exc.to_string(),
+                exc.str().unwrap().extract::<String>().unwrap()
+            );
+        });
+    }
+
+    #[test]
+    fn native_exception_chain() {
+        use std::error::Error;
+
+        Python::with_gil(|py| {
+            let exc = py
+                .run(
+                    "raise Exception('banana') from TypeError('peach')",
+                    None,
+                    None,
+                )
+                .expect_err("raising should have given us an error")
+                .into_value(py)
+                .into_ref(py);
+
+            assert_eq!(format!("{:?}", exc), "Exception('banana')");
+
+            let source = exc.source().expect("cause should exist");
+
+            assert_eq!(format!("{:?}", source), "TypeError('peach')");
+
+            let source_source = source.source();
+            assert!(source_source.is_none(), "source_source should be None");
+        });
+    }
+
+    #[test]
+    fn unicode_decode_error() {
+        let invalid_utf8 = b"fo\xd8o";
+        let err = std::str::from_utf8(invalid_utf8).expect_err("should be invalid utf8");
+        Python::with_gil(|py| {
+            let decode_err = PyUnicodeDecodeError::new_utf8(py, invalid_utf8, err).unwrap();
+            assert_eq!(
+                format!("{:?}", decode_err),
+                "UnicodeDecodeError('utf-8', b'fo\\xd8o', 2, 3, 'invalid utf-8')"
+            );
+
+            // Restoring should preserve the same error
+            let e: PyErr = decode_err.into();
+            e.restore(py);
+
+            assert_eq!(
+                PyErr::fetch(py).to_string(),
+                "UnicodeDecodeError: \'utf-8\' codec can\'t decode byte 0xd8 in position 2: invalid utf-8"
+            );
+        });
+    }
+
+    test_exception!(PyBaseException);
+    test_exception!(PyException);
+    test_exception!(PyStopAsyncIteration);
+    test_exception!(PyStopIteration);
+    test_exception!(PyGeneratorExit);
+    test_exception!(PyArithmeticError);
+    test_exception!(PyLookupError);
+    test_exception!(PyAssertionError);
+    test_exception!(PyAttributeError);
+    test_exception!(PyBufferError);
+    test_exception!(PyEOFError);
+    test_exception!(PyFloatingPointError);
+    test_exception!(PyOSError);
+    test_exception!(PyImportError);
+    test_exception!(PyModuleNotFoundError);
+    test_exception!(PyIndexError);
+    test_exception!(PyKeyError);
+    test_exception!(PyKeyboardInterrupt);
+    test_exception!(PyMemoryError);
+    test_exception!(PyNameError);
+    test_exception!(PyOverflowError);
+    test_exception!(PyRuntimeError);
+    test_exception!(PyRecursionError);
+    test_exception!(PyNotImplementedError);
+    test_exception!(PySyntaxError);
+    test_exception!(PyReferenceError);
+    test_exception!(PySystemError);
+    test_exception!(PySystemExit);
+    test_exception!(PyTypeError);
+    test_exception!(PyUnboundLocalError);
+    test_exception!(PyUnicodeError);
+    test_exception!(PyUnicodeDecodeError, |py| {
+        let invalid_utf8 = b"fo\xd8o";
+        let err = std::str::from_utf8(invalid_utf8).expect_err("should be invalid utf8");
+        PyErr::from_value(PyUnicodeDecodeError::new_utf8(py, invalid_utf8, err).unwrap())
+    });
+    test_exception!(PyUnicodeEncodeError, |py: Python<'_>| {
+        py.eval("chr(40960).encode('ascii')", None, None)
+            .unwrap_err()
+    });
+    test_exception!(PyUnicodeTranslateError, |_| {
+        PyUnicodeTranslateError::new_err(("\u{3042}", 0, 1, "ouch"))
+    });
+    test_exception!(PyValueError);
+    test_exception!(PyZeroDivisionError);
+    test_exception!(PyBlockingIOError);
+    test_exception!(PyBrokenPipeError);
+    test_exception!(PyChildProcessError);
+    test_exception!(PyConnectionError);
+    test_exception!(PyConnectionAbortedError);
+    test_exception!(PyConnectionRefusedError);
+    test_exception!(PyConnectionResetError);
+    test_exception!(PyFileExistsError);
+    test_exception!(PyFileNotFoundError);
+    test_exception!(PyInterruptedError);
+    test_exception!(PyIsADirectoryError);
+    test_exception!(PyNotADirectoryError);
+    test_exception!(PyPermissionError);
+    test_exception!(PyProcessLookupError);
+    test_exception!(PyTimeoutError);
+    test_exception!(PyEnvironmentError);
+    test_exception!(PyIOError);
+    #[cfg(windows)]
+    test_exception!(PyWindowsError);
 }

@@ -2,21 +2,23 @@
 
 use crate::err::{PyErr, PyResult};
 use crate::ffi::{self, Py_ssize_t};
-use crate::instance::PyNativeType;
-use crate::object::PyObject;
-use crate::Python;
-use crate::{AsPyPointer, ToPyObject};
+use crate::{AsPyPointer, PyAny, PyObject, Python, ToPyObject};
 use std::os::raw::c_long;
 
 /// Represents a Python `slice`.
 ///
-/// Only `c_long` indices supported at the moment by `PySlice` object.
+/// Only `c_long` indices supported at the moment by the `PySlice` object.
 #[repr(transparent)]
-pub struct PySlice(PyObject);
+pub struct PySlice(PyAny);
 
-pyobject_native_type!(PySlice, ffi::PySlice_Type, ffi::PySlice_Check);
+pyobject_native_type!(
+    PySlice,
+    ffi::PySliceObject,
+    ffi::PySlice_Type,
+    #checkfunction=ffi::PySlice_Check
+);
 
-/// Represents a Python `slice` indices
+/// Represents Python `slice` indices.
 pub struct PySliceIndices {
     pub start: isize,
     pub stop: isize,
@@ -36,7 +38,7 @@ impl PySliceIndices {
 }
 
 impl PySlice {
-    /// Construct a new slice with the given elements.
+    /// Constructs a new slice with the given elements.
     pub fn new(py: Python, start: isize, stop: isize, step: isize) -> &PySlice {
         unsafe {
             let ptr = ffi::PySlice_New(
@@ -48,22 +50,24 @@ impl PySlice {
         }
     }
 
-    /// Retrieve the start, stop, and step indices from the slice object slice assuming a sequence of length length, and store the length of the slice in slicelength.
+    /// Retrieves the start, stop, and step indices from the slice object,
+    /// assuming a sequence of length `length`, and stores the length of the
+    /// slice in its `slicelength` member.
     #[inline]
     pub fn indices(&self, length: c_long) -> PyResult<PySliceIndices> {
         // non-negative Py_ssize_t should always fit into Rust usize
         unsafe {
-            let slicelength: isize = 0;
-            let start: isize = 0;
-            let stop: isize = 0;
-            let step: isize = 0;
+            let mut slicelength: isize = 0;
+            let mut start: isize = 0;
+            let mut stop: isize = 0;
+            let mut step: isize = 0;
             let r = ffi::PySlice_GetIndicesEx(
                 self.as_ptr(),
                 length as Py_ssize_t,
-                &start as *const _ as *mut _,
-                &stop as *const _ as *mut _,
-                &step as *const _ as *mut _,
-                &slicelength as *const _ as *mut _,
+                &mut start,
+                &mut stop,
+                &mut step,
+                &mut slicelength,
             );
             if r == 0 {
                 Ok(PySliceIndices {

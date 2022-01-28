@@ -1,10 +1,8 @@
-#![feature(concat_idents)]
+#![cfg(not(Py_LIMITED_API))]
 
-use pyo3::ffi::*;
 use pyo3::prelude::*;
-use pyo3::types::{IntoPyDict, PyAny};
+use pyo3::types::IntoPyDict;
 
-#[allow(clippy::trivially_copy_pass_by_ref)]
 fn _get_subclasses<'p>(
     py: &'p Python,
     py_type: &str,
@@ -13,43 +11,43 @@ fn _get_subclasses<'p>(
     // Import the class from Python and create some subclasses
     let datetime = py.import("datetime")?;
 
-    let locals = [(py_type, datetime.get(py_type)?)].into_py_dict(*py);
+    let locals = [(py_type, datetime.getattr(py_type)?)].into_py_dict(*py);
 
     let make_subclass_py = format!("class Subklass({}):\n    pass", py_type);
 
     let make_sub_subclass_py = "class SubSubklass(Subklass):\n    pass";
 
-    py.run(&make_subclass_py, None, Some(&locals))?;
-    py.run(&make_sub_subclass_py, None, Some(&locals))?;
+    py.run(&make_subclass_py, None, Some(locals))?;
+    py.run(make_sub_subclass_py, None, Some(locals))?;
 
     // Construct an instance of the base class
-    let obj = py.eval(&format!("{}({})", py_type, args), None, Some(&locals))?;
+    let obj = py.eval(&format!("{}({})", py_type, args), None, Some(locals))?;
 
     // Construct an instance of the subclass
-    let sub_obj = py.eval(&format!("Subklass({})", args), None, Some(&locals))?;
+    let sub_obj = py.eval(&format!("Subklass({})", args), None, Some(locals))?;
 
     // Construct an instance of the sub-subclass
-    let sub_sub_obj = py.eval(&format!("SubSubklass({})", args), None, Some(&locals))?;
+    let sub_sub_obj = py.eval(&format!("SubSubklass({})", args), None, Some(locals))?;
 
     Ok((obj, sub_obj, sub_sub_obj))
 }
 
 macro_rules! assert_check_exact {
-    ($check_func:ident, $obj: expr) => {
+    ($check_func:ident, $check_func_exact:ident, $obj: expr) => {
         unsafe {
-            use pyo3::AsPyPointer;
+            use pyo3::{ffi::*, AsPyPointer};
             assert!($check_func(($obj).as_ptr()) != 0);
-            assert!(concat_idents!($check_func, Exact)(($obj).as_ptr()) != 0);
+            assert!($check_func_exact(($obj).as_ptr()) != 0);
         }
     };
 }
 
 macro_rules! assert_check_only {
-    ($check_func:ident, $obj: expr) => {
+    ($check_func:ident, $check_func_exact:ident, $obj: expr) => {
         unsafe {
-            use pyo3::AsPyPointer;
+            use pyo3::{ffi::*, AsPyPointer};
             assert!($check_func(($obj).as_ptr()) != 0);
-            assert!(concat_idents!($check_func, Exact)(($obj).as_ptr()) == 0);
+            assert!($check_func_exact(($obj).as_ptr()) == 0);
         }
     };
 }
@@ -60,9 +58,9 @@ fn test_date_check() {
     let py = gil.python();
     let (obj, sub_obj, sub_sub_obj) = _get_subclasses(&py, "date", "2018, 1, 1").unwrap();
 
-    assert_check_exact!(PyDate_Check, obj);
-    assert_check_only!(PyDate_Check, sub_obj);
-    assert_check_only!(PyDate_Check, sub_sub_obj);
+    assert_check_exact!(PyDate_Check, PyDate_CheckExact, obj);
+    assert_check_only!(PyDate_Check, PyDate_CheckExact, sub_obj);
+    assert_check_only!(PyDate_Check, PyDate_CheckExact, sub_sub_obj);
 }
 
 #[test]
@@ -71,22 +69,23 @@ fn test_time_check() {
     let py = gil.python();
     let (obj, sub_obj, sub_sub_obj) = _get_subclasses(&py, "time", "12, 30, 15").unwrap();
 
-    assert_check_exact!(PyTime_Check, obj);
-    assert_check_only!(PyTime_Check, sub_obj);
-    assert_check_only!(PyTime_Check, sub_sub_obj);
+    assert_check_exact!(PyTime_Check, PyTime_CheckExact, obj);
+    assert_check_only!(PyTime_Check, PyTime_CheckExact, sub_obj);
+    assert_check_only!(PyTime_Check, PyTime_CheckExact, sub_sub_obj);
 }
 
 #[test]
 fn test_datetime_check() {
     let gil = Python::acquire_gil();
     let py = gil.python();
-    let (obj, sub_obj, sub_sub_obj) =
-        _get_subclasses(&py, "datetime", "2018, 1, 1, 13, 30, 15").unwrap();
+    let (obj, sub_obj, sub_sub_obj) = _get_subclasses(&py, "datetime", "2018, 1, 1, 13, 30, 15")
+        .map_err(|e| e.print(py))
+        .unwrap();
 
-    assert_check_only!(PyDate_Check, obj);
-    assert_check_exact!(PyDateTime_Check, obj);
-    assert_check_only!(PyDateTime_Check, sub_obj);
-    assert_check_only!(PyDateTime_Check, sub_sub_obj);
+    assert_check_only!(PyDate_Check, PyDate_CheckExact, obj);
+    assert_check_exact!(PyDateTime_Check, PyDateTime_CheckExact, obj);
+    assert_check_only!(PyDateTime_Check, PyDateTime_CheckExact, sub_obj);
+    assert_check_only!(PyDateTime_Check, PyDateTime_CheckExact, sub_sub_obj);
 }
 
 #[test]
@@ -95,9 +94,9 @@ fn test_delta_check() {
     let py = gil.python();
     let (obj, sub_obj, sub_sub_obj) = _get_subclasses(&py, "timedelta", "1, -3").unwrap();
 
-    assert_check_exact!(PyDelta_Check, obj);
-    assert_check_only!(PyDelta_Check, sub_obj);
-    assert_check_only!(PyDelta_Check, sub_sub_obj);
+    assert_check_exact!(PyDelta_Check, PyDelta_CheckExact, obj);
+    assert_check_only!(PyDelta_Check, PyDelta_CheckExact, sub_obj);
+    assert_check_only!(PyDelta_Check, PyDelta_CheckExact, sub_sub_obj);
 }
 
 #[test]
@@ -107,9 +106,8 @@ fn test_datetime_utc() {
 
     let gil = Python::acquire_gil();
     let py = gil.python();
-
     let datetime = py.import("datetime").map_err(|e| e.print(py)).unwrap();
-    let timezone = datetime.get("timezone").unwrap();
+    let timezone = datetime.getattr("timezone").unwrap();
     let utc = timezone.getattr("utc").unwrap().to_object(py);
 
     let dt = PyDateTime::new(py, 2018, 1, 1, 0, 0, 0, 0, Some(&utc)).unwrap();
@@ -124,7 +122,6 @@ fn test_datetime_utc() {
     assert_approx_eq!(offset, 0f32);
 }
 
-#[cfg(Py_3_6)]
 static INVALID_DATES: &[(i32, u8, u8)] = &[
     (-1, 1, 1),
     (0, 1, 1),
@@ -137,16 +134,13 @@ static INVALID_DATES: &[(i32, u8, u8)] = &[
     (2018, 1, 32),
 ];
 
-#[cfg(Py_3_6)]
 static INVALID_TIMES: &[(u8, u8, u8, u32)] =
     &[(25, 0, 0, 0), (255, 0, 0, 0), (0, 60, 0, 0), (0, 0, 61, 0)];
 
-#[cfg(Py_3_6)]
 #[test]
 fn test_pydate_out_of_bounds() {
     use pyo3::types::PyDate;
 
-    // This test is an XFAIL on Python < 3.6 until bounds checking is implemented
     let gil = Python::acquire_gil();
     let py = gil.python();
     for val in INVALID_DATES {
@@ -156,12 +150,10 @@ fn test_pydate_out_of_bounds() {
     }
 }
 
-#[cfg(Py_3_6)]
 #[test]
 fn test_pytime_out_of_bounds() {
     use pyo3::types::PyTime;
 
-    // This test is an XFAIL on Python < 3.6 until bounds checking is implemented
     let gil = Python::acquire_gil();
     let py = gil.python();
     for val in INVALID_TIMES {
@@ -171,13 +163,11 @@ fn test_pytime_out_of_bounds() {
     }
 }
 
-#[cfg(Py_3_6)]
 #[test]
 fn test_pydatetime_out_of_bounds() {
     use pyo3::types::PyDateTime;
     use std::iter;
 
-    // This test is an XFAIL on Python < 3.6 until bounds checking is implemented
     let gil = Python::acquire_gil();
     let py = gil.python();
     let valid_time = (0, 0, 0, 0);

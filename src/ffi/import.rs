@@ -1,7 +1,6 @@
 use crate::ffi::object::PyObject;
 use std::os::raw::{c_char, c_int, c_long};
 
-#[cfg_attr(windows, link(name = "pythonXY"))]
 extern "C" {
     pub fn PyImport_GetMagicNumber() -> c_long;
     pub fn PyImport_GetMagicTag() -> *const c_char;
@@ -27,6 +26,7 @@ extern "C" {
     ) -> *mut PyObject;
     #[cfg_attr(PyPy, link_name = "PyPyImport_GetModuleDict")]
     pub fn PyImport_GetModuleDict() -> *mut PyObject;
+    // skipped Python 3.7 / ex-non-limited PyImport_GetModule
     pub fn PyImport_AddModuleObject(name: *mut PyObject) -> *mut PyObject;
     #[cfg_attr(PyPy, link_name = "PyPyImport_AddModule")]
     pub fn PyImport_AddModule(name: *const c_char) -> *mut PyObject;
@@ -62,13 +62,15 @@ pub unsafe fn PyImport_ImportModuleEx(
     PyImport_ImportModuleLevel(name, globals, locals, fromlist, 0)
 }
 
-#[cfg_attr(windows, link(name = "pythonXY"))]
 extern "C" {
     pub fn PyImport_GetImporter(path: *mut PyObject) -> *mut PyObject;
+    #[cfg_attr(PyPy, link_name = "PyPyImport_Import")]
     pub fn PyImport_Import(name: *mut PyObject) -> *mut PyObject;
     #[cfg_attr(PyPy, link_name = "PyPyImport_ReloadModule")]
     pub fn PyImport_ReloadModule(m: *mut PyObject) -> *mut PyObject;
-    pub fn PyImport_Cleanup() -> ();
+    #[cfg(not(Py_3_9))]
+    #[deprecated(note = "Removed in Python 3.9 as it was \"For internal use only\".")]
+    pub fn PyImport_Cleanup();
     pub fn PyImport_ImportFrozenModuleObject(name: *mut PyObject) -> c_int;
     pub fn PyImport_ImportFrozenModule(name: *const c_char) -> c_int;
 

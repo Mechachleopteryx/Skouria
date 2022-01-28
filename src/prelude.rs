@@ -1,8 +1,8 @@
 // Copyright (c) 2017-present PyO3 Project and Contributors
 
-//! A collection of items you most likely want to have in scope when working with pyo3
+//! PyO3's prelude.
 //!
-//! The purpose of this module is to alleviate imports of many common pyo3 traits
+//! The purpose of this module is to alleviate imports of many commonly used items of the PyO3 crate
 //! by adding a glob import to the top of pyo3 heavy modules:
 //!
 //! ```
@@ -10,16 +10,18 @@
 //! use pyo3::prelude::*;
 //! ```
 
+pub use crate::conversion::{
+    FromPyObject, IntoPy, IntoPyPointer, PyTryFrom, PyTryInto, ToPyObject,
+};
 pub use crate::err::{PyErr, PyResult};
 pub use crate::gil::GILGuard;
-pub use crate::instance::{AsPyRef, Py, PyRef, PyRefMut};
-pub use crate::object::PyObject;
-pub use crate::objectprotocol::ObjectProtocol;
+pub use crate::instance::{Py, PyObject};
+pub use crate::pycell::{PyCell, PyRef, PyRefMut};
+pub use crate::pyclass_init::PyClassInitializer;
 pub use crate::python::Python;
-pub use crate::{FromPy, FromPyObject, IntoPy, IntoPyPointer, PyTryFrom, PyTryInto, ToPyObject};
-// This is only part of the prelude because we need it for the pymodule function
-pub use crate::types::PyModule;
-// This is required for the constructor
-pub use crate::PyRawObject;
-pub use pyo3cls::pymodule;
-pub use pyo3cls::{pyclass, pyfunction, pymethods, pyproto};
+pub use crate::types::{PyAny, PyModule};
+
+#[cfg(feature = "macros")]
+pub use pyo3_macros::{
+    pyclass, pyfunction, pymethods, pymodule, pyproto, wrap_pyfunction, FromPyObject,
+};

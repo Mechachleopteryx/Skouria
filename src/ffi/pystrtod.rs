@@ -1,7 +1,6 @@
 use crate::ffi::object::PyObject;
 use std::os::raw::{c_char, c_double, c_int};
 
-#[cfg_attr(windows, link(name = "pythonXY"))]
 extern "C" {
     #[cfg_attr(PyPy, link_name = "PyPyOS_string_to_double")]
     pub fn PyOS_string_to_double(
@@ -18,6 +17,9 @@ extern "C" {
         _type: *mut c_int,
     ) -> *mut c_char;
 }
+
+// skipped non-limited _Py_string_to_number_with_underscores
+// skipped non-limited _Py_parse_inf_or_nan
 
 /* PyOS_double_to_string's "flags" parameter can be set to 0 or more of: */
 pub const Py_DTSF_SIGN: c_int = 0x01; /* always add the sign */

@@ -1,0 +1,13 @@
+[package]
+name = "maturin-starter"
+version = "0.1.0"
+edition = "2018"
+
+[lib]
+name = "maturin_starter"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = { path = "../../", features = ["extension-module"] }
+
+[workspace]

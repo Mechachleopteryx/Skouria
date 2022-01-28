@@ -2,8 +2,8 @@ use crate::ffi::object::PyObject;
 use crate::ffi::pyport::Py_ssize_t;
 use std::os::raw::{c_char, c_int};
 
-#[cfg_attr(windows, link(name = "pythonXY"))]
 extern "C" {
+    #[cfg_attr(PyPy, link_name = "PyPyErr_WarnEx")]
     pub fn PyErr_WarnEx(
         category: *mut PyObject,
         message: *const c_char,
@@ -16,7 +16,6 @@ extern "C" {
         format: *const c_char,
         ...
     ) -> c_int;
-    #[cfg(Py_3_6)]
     pub fn PyErr_ResourceWarning(
         source: *mut PyObject,
         stack_level: Py_ssize_t,

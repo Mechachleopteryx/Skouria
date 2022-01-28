@@ -1,12 +1,10 @@
-# Appendix: PyO3 and rust-cpython
+# PyO3 and rust-cpython
 
-PyO3 began as fork of [rust-cpython](https://github.com/dgrunwald/rust-cpython) when rust-cpython wasn't maintained. Over the time PyO3 has become fundamentally different from rust-cpython.
-
-This chapter is based on the discussion in [PyO3/pyo3#55](https://github.com/PyO3/pyo3/issues/55).
+PyO3 began as fork of [rust-cpython](https://github.com/dgrunwald/rust-cpython) when rust-cpython wasn't maintained. Over time PyO3 has become fundamentally different from rust-cpython.
 
 ## Macros
 
-While rust-cpython has a macro based dsl for declaring modules and classes, PyO3 uses proc macros and specialization. PyO3 also doesn't change your struct and functions so you can still use them as normal Rust functions. The disadvantage is that specialization currently only works on nightly.
+While rust-cpython has a `macro_rules!` based dsl for declaring modules and classes, PyO3 uses proc macros. PyO3 also doesn't change your struct and functions so you can still use them as normal Rust functions.
 
 **rust-cpython**
 
@@ -26,7 +24,6 @@ py_class!(class MyClass |py| {
 
 ```rust
 use pyo3::prelude::*;
-use pyo3::PyRawObject;
 
 #[pyclass]
 struct MyClass {
@@ -36,12 +33,8 @@ struct MyClass {
 #[pymethods]
 impl MyClass {
     #[new]
-    fn new(obj: &PyRawObject, num: u32) {
-        obj.init({
-            MyClass {
-                num,
-            }
-        });
+    fn new(num: u32) -> Self {
+        MyClass { num }
     }
 
     fn half(&self) -> PyResult<u32> {
@@ -52,7 +45,8 @@ impl MyClass {
 
 ## Ownership and lifetimes
 
-All objects are owned by the PyO3 library and all APIs available with references, while in rust-cpython, you own python objects.
+While in rust-cpython you always own python objects, PyO3 allows efficient *borrowed objects*
+and most APIs are available with references.
 
 Here is an example of the PyList API:
 
@@ -74,11 +68,12 @@ impl PyList {
 
    fn new(py: Python) -> &PyList {...}
 
-   fn get_item(&self, index: isize) -> &PyObject {...}
+   fn get_item(&self, index: isize) -> &PyAny {...}
 }
 ```
 
-Because PyO3 allows only references to Python objects, all references have the GIL lifetime. So the owned Python object is not required, and it is safe to have functions like `fn py<'p>(&'p self) -> Python<'p> {}`.
+In PyO3, all object references are bounded by the GIL lifetime.
+So the owned Python object is not required, and it is safe to have functions like `fn py<'p>(&'p self) -> Python<'p> {}`.
 
 ## Error handling
 

@@ -1,11 +1,9 @@
-#[cfg(Py_3_6)]
-use crate::ffi::code::FreeFunc;
 use crate::ffi::object::PyObject;
 use crate::ffi::pystate::PyThreadState;
 use std::os::raw::{c_char, c_int, c_void};
 
-#[cfg_attr(windows, link(name = "pythonXY"))]
 extern "C" {
+    #[cfg_attr(Py_3_9, deprecated(note = "Python 3.9"))]
     #[cfg_attr(PyPy, link_name = "PyPyEval_CallObjectWithKeywords")]
     pub fn PyEval_CallObjectWithKeywords(
         func: *mut PyObject,
@@ -14,15 +12,18 @@ extern "C" {
     ) -> *mut PyObject;
 }
 
+#[cfg_attr(Py_3_9, deprecated(note = "Python 3.9"))]
 #[inline]
 pub unsafe fn PyEval_CallObject(func: *mut PyObject, arg: *mut PyObject) -> *mut PyObject {
-    PyEval_CallObjectWithKeywords(func, arg, ::std::ptr::null_mut())
+    #[allow(deprecated)]
+    PyEval_CallObjectWithKeywords(func, arg, std::ptr::null_mut())
 }
 
-#[cfg_attr(windows, link(name = "pythonXY"))]
 extern "C" {
+    #[cfg_attr(Py_3_9, deprecated(note = "Python 3.9"))]
     #[cfg_attr(PyPy, link_name = "PyPyEval_CallFunction")]
     pub fn PyEval_CallFunction(obj: *mut PyObject, format: *const c_char, ...) -> *mut PyObject;
+    #[cfg_attr(Py_3_9, deprecated(note = "Python 3.9"))]
     #[cfg_attr(PyPy, link_name = "PyPyEval_CallMethod")]
     pub fn PyEval_CallMethod(
         obj: *mut PyObject,
@@ -45,50 +46,50 @@ extern "C" {
     #[cfg_attr(PyPy, link_name = "PyPy_MakePendingCalls")]
     pub fn Py_MakePendingCalls() -> c_int;
     #[cfg_attr(PyPy, link_name = "PyPy_SetRecursionLimit")]
-    pub fn Py_SetRecursionLimit(arg1: c_int) -> ();
+    pub fn Py_SetRecursionLimit(arg1: c_int);
     #[cfg_attr(PyPy, link_name = "PyPy_GetRecursionLimit")]
     pub fn Py_GetRecursionLimit() -> c_int;
     fn _Py_CheckRecursiveCall(_where: *mut c_char) -> c_int;
-    static mut _Py_CheckRecursionLimit: c_int;
 }
 
-// TODO: Py_EnterRecursiveCall etc.
-#[cfg(Py_3_6)]
-pub type _PyFrameEvalFunction =
-    extern "C" fn(*mut crate::ffi::PyFrameObject, c_int) -> *mut PyObject;
+// skipped Py_EnterRecursiveCall
+// skipped Py_LeaveRecursiveCall
 
-#[cfg_attr(windows, link(name = "pythonXY"))]
 extern "C" {
     pub fn PyEval_GetFuncName(arg1: *mut PyObject) -> *const c_char;
     pub fn PyEval_GetFuncDesc(arg1: *mut PyObject) -> *const c_char;
     pub fn PyEval_GetCallStats(arg1: *mut PyObject) -> *mut PyObject;
     pub fn PyEval_EvalFrame(arg1: *mut crate::ffi::PyFrameObject) -> *mut PyObject;
-    #[cfg(Py_3_6)]
-    pub fn _PyEval_EvalFrameDefault(
-        arg1: *mut crate::ffi::PyFrameObject,
-        exc: c_int,
-    ) -> *mut PyObject;
-    #[cfg(Py_3_6)]
-    pub fn _PyEval_RequestCodeExtraIndex(func: FreeFunc) -> c_int;
     pub fn PyEval_EvalFrameEx(f: *mut crate::ffi::PyFrameObject, exc: c_int) -> *mut PyObject;
     #[cfg_attr(PyPy, link_name = "PyPyEval_SaveThread")]
     pub fn PyEval_SaveThread() -> *mut PyThreadState;
     #[cfg_attr(PyPy, link_name = "PyPyEval_RestoreThread")]
-    pub fn PyEval_RestoreThread(arg1: *mut PyThreadState) -> ();
+    pub fn PyEval_RestoreThread(arg1: *mut PyThreadState);
 }
 
-#[cfg(py_sys_config = "WITH_THREAD")]
-#[cfg_attr(windows, link(name = "pythonXY"))]
 extern "C" {
     #[cfg_attr(PyPy, link_name = "PyPyEval_ThreadsInitialized")]
     pub fn PyEval_ThreadsInitialized() -> c_int;
     #[cfg_attr(PyPy, link_name = "PyPyEval_InitThreads")]
-    pub fn PyEval_InitThreads() -> ();
-    pub fn PyEval_AcquireLock() -> ();
-    pub fn PyEval_ReleaseLock() -> ();
+    pub fn PyEval_InitThreads();
+    pub fn PyEval_AcquireLock();
+    pub fn PyEval_ReleaseLock();
     #[cfg_attr(PyPy, link_name = "PyPyEval_AcquireThread")]
-    pub fn PyEval_AcquireThread(tstate: *mut PyThreadState) -> ();
+    pub fn PyEval_AcquireThread(tstate: *mut PyThreadState);
     #[cfg_attr(PyPy, link_name = "PyPyEval_ReleaseThread")]
-    pub fn PyEval_ReleaseThread(tstate: *mut PyThreadState) -> ();
-    pub fn PyEval_ReInitThreads() -> ();
+    pub fn PyEval_ReleaseThread(tstate: *mut PyThreadState);
+    #[cfg(not(Py_3_8))]
+    pub fn PyEval_ReInitThreads();
 }
+
+// skipped Py_BEGIN_ALLOW_THREADS
+// skipped Py_BLOCK_THREADS
+// skipped Py_UNBLOCK_THREADS
+// skipped Py_END_ALLOW_THREADS
+// skipped FVC_MASK
+// skipped FVC_NONE
+// skipped FVC_STR
+// skipped FVC_REPR
+// skipped FVC_ASCII
+// skipped FVS_MASK
+// skipped FVS_HAVE_SPEC

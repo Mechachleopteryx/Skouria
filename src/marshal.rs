@@ -1,3 +1,7 @@
+#![cfg(not(Py_LIMITED_API))]
+
+//! Support for the Python `marshal` format.
+
 use crate::ffi;
 use crate::types::{PyAny, PyBytes};
 use crate::{AsPyPointer, FromPyPointer, PyResult, Python};
@@ -8,24 +12,23 @@ pub const VERSION: i32 = 4;
 
 /// Serialize an object to bytes using the Python built-in marshal module.
 ///
-/// The built-in marshalling only supports a limited range of object.
+/// The built-in marshalling only supports a limited range of objects.
 /// The exact types supported depend on the version argument.
 /// The [`VERSION`] constant holds the highest version currently supported.
 ///
-/// See the [python documentation](https://docs.python.org/3/library/marshal.html) for more details.
+/// See the [Python documentation](https://docs.python.org/3/library/marshal.html) for more details.
 ///
-/// # Example:
+/// # Examples
 /// ```
 /// # use pyo3::{marshal, types::PyDict};
-/// # let gil = pyo3::Python::acquire_gil();
-/// # let py = gil.python();
-/// #
+/// # pyo3::Python::with_gil(|py| {
 /// let dict = PyDict::new(py);
 /// dict.set_item("aap", "noot").unwrap();
 /// dict.set_item("mies", "wim").unwrap();
 /// dict.set_item("zus", "jet").unwrap();
 ///
 /// let bytes = marshal::dumps(py, dict, marshal::VERSION);
+/// # });
 /// ```
 pub fn dumps<'a>(py: Python<'a>, object: &impl AsPyPointer, version: i32) -> PyResult<&'a PyBytes> {
     unsafe {
@@ -48,26 +51,25 @@ where
 }
 
 #[cfg(test)]
-mod test {
+mod tests {
     use super::*;
     use crate::types::PyDict;
 
     #[test]
-    fn marhshal_roundtrip() {
-        let gil = Python::acquire_gil();
-        let py = gil.python();
+    fn marshal_roundtrip() {
+        Python::with_gil(|py| {
+            let dict = PyDict::new(py);
+            dict.set_item("aap", "noot").unwrap();
+            dict.set_item("mies", "wim").unwrap();
+            dict.set_item("zus", "jet").unwrap();
 
-        let dict = PyDict::new(py);
-        dict.set_item("aap", "noot").unwrap();
-        dict.set_item("mies", "wim").unwrap();
-        dict.set_item("zus", "jet").unwrap();
+            let bytes = dumps(py, dict, VERSION)
+                .expect("marshalling failed")
+                .as_bytes();
+            let deserialized = loads(py, bytes).expect("unmarshalling failed");
 
-        let bytes = dumps(py, dict, VERSION)
-            .expect("marshalling failed")
-            .as_bytes();
-        let deserialzed = loads(py, bytes).expect("unmarshalling failed");
-
-        assert!(equal(py, dict, deserialzed));
+            assert!(equal(py, dict, deserialized));
+        });
     }
 
     fn equal(_py: Python, a: &impl AsPyPointer, b: &impl AsPyPointer) -> bool {

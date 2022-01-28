@@ -1,6 +1,6 @@
-use crate::ffi::frameobject::PyFrameObject;
 use crate::ffi::object::*;
 use crate::ffi::pyport::Py_ssize_t;
+use crate::ffi::PyFrameObject;
 use std::os::raw::c_int;
 
 #[repr(C)]
@@ -33,46 +33,49 @@ pub unsafe fn PyGen_CheckExact(op: *mut PyObject) -> c_int {
     (Py_TYPE(op) == &mut PyGen_Type) as c_int
 }
 
-#[cfg_attr(windows, link(name = "pythonXY"))]
 extern "C" {
     pub fn PyGen_New(frame: *mut PyFrameObject) -> *mut PyObject;
+    // skipped PyGen_NewWithQualName
+    // skipped _PyGen_SetStopIterationValue
+    // skipped _PyGen_FetchStopIterationValue
+    // skipped _PyGen_yf
+    // skipped _PyGen_Finalize
+    #[cfg(not(Py_3_9))]
+    #[deprecated(note = "This function was never documented in the Python API.")]
     pub fn PyGen_NeedsFinalizing(op: *mut PyGenObject) -> c_int;
 }
+
+// skipped PyCoroObject
 
 #[cfg_attr(windows, link(name = "pythonXY"))]
 extern "C" {
     pub static mut PyCoro_Type: PyTypeObject;
-}
-
-#[inline]
-pub unsafe fn PyCoro_Check(op: *mut PyObject) -> c_int {
-    PyObject_TypeCheck(op, &mut PyCoro_Type)
-}
-
-#[cfg_attr(windows, link(name = "pythonXY"))]
-extern "C" {
     pub static mut _PyCoroWrapper_Type: PyTypeObject;
 }
 
 #[inline]
-pub unsafe fn PyCoroWrapper_Check(op: *mut PyObject) -> c_int {
-    PyObject_TypeCheck(op, &mut _PyCoroWrapper_Type)
+pub unsafe fn PyCoro_CheckExact(op: *mut PyObject) -> c_int {
+    PyObject_TypeCheck(op, &mut PyCoro_Type)
 }
 
-#[cfg(Py_3_6)]
+// skipped _PyCoro_GetAwaitableIter
+// skipped PyCoro_New
+
+// skipped PyAsyncGenObject
+
 #[cfg_attr(windows, link(name = "pythonXY"))]
 extern "C" {
     pub static mut PyAsyncGen_Type: PyTypeObject;
+    // skipped _PyAsyncGenASend_Type
+    // skipped _PyAsyncGenWrappedValue_Type
+    // skipped _PyAsyncGenAThrow_Type
 }
 
-#[cfg(Py_3_6)]
+// skipped PyAsyncGen_New
+
 #[inline]
-pub unsafe fn PyAsyncGen_Check(op: *mut PyObject) -> c_int {
+pub unsafe fn PyAsyncGen_CheckExact(op: *mut PyObject) -> c_int {
     PyObject_TypeCheck(op, &mut PyAsyncGen_Type)
 }
 
-#[cfg(not(Py_3_6))]
-#[inline]
-pub unsafe fn PyAsyncGen_Check(_op: *mut PyObject) -> c_int {
-    0
-}
+// skipped _PyAsyncGenValueWrapperNew
